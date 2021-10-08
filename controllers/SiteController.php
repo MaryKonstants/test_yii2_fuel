@@ -2,8 +2,10 @@
 
 namespace app\controllers;
 
+use app\models\search\DataSearch;
 use Yii;
 use yii\filters\AccessControl;
+use yii\helpers\ArrayHelper;
 use yii\web\Controller;
 use yii\web\Response;
 use yii\filters\VerbFilter;
@@ -61,7 +63,27 @@ class SiteController extends Controller
      */
     public function actionIndex()
     {
-        return $this->render('index');
+        $db = Yii::$app->db;
+
+        $sql = "
+             SELECT CONCAT('UPDATE data SET volume = (volume + ', ROUND(SUM(volume), 2),
+                           ') WHERE card_number = ', card_number,
+                           \" AND service = '\", service,
+                           \"' AND address_id = \", address_id,
+                           ' AND ABS(volume) > ', ROUND(SUM(volume), 2), ' LIMIT 1; ',
+                           'DELETE FROM data WHERE id IN (', GROUP_CONCAT(id), ');'
+                        ) as up_query
+             FROM data
+             WHERE volume > 0
+             GROUP BY card_number, service, address_id
+        ";
+
+        $rows = $db->createCommand($sql)->queryAll();
+        foreach ($rows as $row) {
+            $db->createCommand($row['up_query'])->execute();
+        }
+
+        return $this->render('index', []);
     }
 
     /**
@@ -121,8 +143,31 @@ class SiteController extends Controller
      *
      * @return string
      */
-    public function actionAbout()
+    public function actionAbout($year = null, $month = null)
     {
-        return $this->render('about');
+        $db = Yii::$app->db;
+        $sql = "
+        SELECT
+        Year(`date`) as Year,
+        Month(`date`) as Month,
+        Count(*) As Total_Rows
+        FROM data
+        GROUP BY Year(`date`), Month(`date`)
+        ";
+
+        $rows = $db->createCommand($sql)->queryAll();
+        $result = ArrayHelper::map($rows, 'Month', 'Total_Rows', 'Year');
+
+        $searchModel = new DataSearch();
+        $dataProvider = $searchModel->search(ArrayHelper::merge(
+            Yii::$app->request->queryParams,
+            [$searchModel->formName() => ['year' => $year, 'month' => $month]]
+        ));
+
+        return $this->render('about', [
+            'searchModel' => $searchModel,
+            'dataProvider' => $dataProvider,
+            'result' => $result
+        ]);
     }
 }
